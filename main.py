@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import itertools
+from multiprocessing import Pool
 
 
 def convert_csv_to_set(path: str) -> set:
@@ -41,7 +42,6 @@ class Arules:
 
     def __init__(self):
         self.continue_level = True
-        # self.c = []
         self.l = []
 
     @staticmethod
@@ -56,9 +56,11 @@ class Arules:
             items.update(each)
         return set(items)
 
-    def level_process(self, transactions: dict, level: int):
-        if level == 1:
-            c = self.get_c_dict(transactions, level)
+    def level_process(self, transactions: dict, level: int, min_sup: float):
+        args = [(transactions[i*self.MAX_LENGTH: (i+1)*self.MAX_LENGTH], level) for i in range(self.MAX_LENGTH)]
+        pool = Pool((len(transactions) % self.MAX_LENGTH) + 1)
+        c_results = self.merge_dicts(pool.starmap(self.get_c_dict, args))
+        self.l.append(self.get_l_dict(len(transactions), c_results, min_sup))
 
     def get_c_dict(self, transactions: dict, level: int) -> dict:
         """
@@ -93,11 +95,19 @@ class Arules:
         return c
 
     @staticmethod
-    def merge_two_dict(dict_a: dict, dict_b: dict) -> dict:
+    def merge_dicts(list_dict: list) -> dict:
+        """
+        if a key in dict_a and dict_b => value of key = dict_b[key] + dict_a[key]
+        :param list_dict:  list of {key: value} that value must be int
+        :return: merge dict
+        """
         result = dict()
-        result.update(dict_b)
-        for each in dict_a:
-            result[each] = result.get(each, 0) + dict_a[each]
+        keys = list(set([key for each in list_dict for key in each]))
+        for key in keys:
+            value = 0
+            for each in list_dict:
+                value += each.get(key, 0)
+            result[key] = value
         return result
 
     def get_frequent_item_sets(self, transactions: dict, min_sup: float):
