@@ -37,6 +37,39 @@ def convert_csv_to_dict_data(path: str) -> dict:
     return dict_data
 
 
+class Rules:
+    def __init__(self, rule_part_a: dict, rule_part_b: dict, a_plus_b: int, max_trans: int, sort_by="lift"):
+        self.rule_part_a = rule_part_a
+        self.rule_part_b = rule_part_b
+        self.max_transactions = max_trans
+        self.sup_a_plus_b = a_plus_b
+        self.sort_by = sort_by
+        self.sup = self.calculate_sup(a_plus_b, max_trans)
+        self.conf = self.calculate_conf(list(rule_part_a.values())[0], a_plus_b)
+        self.lift = self.calculate_lift(self.conf, list(rule_part_b.values())[0] / max_trans)
+
+    @staticmethod
+    def calculate_sup(sup_count_a_plus_b: int, max_trans: int):
+        return sup_count_a_plus_b / max_trans
+
+    @staticmethod
+    def calculate_conf(sup_count_a: int, sup_count_a_plus_b: int):
+        return sup_count_a_plus_b / sup_count_a
+
+    @staticmethod
+    def calculate_lift(conf: float, sup_b: float):
+        return conf / sup_b
+
+    def __le__(self, other):
+        if self.sort_by == "lift":
+            return self.lift < other.lift
+        elif self.sort_by == "support":
+            return self.sup < other.sup
+        elif self.sort_by == "confidence":
+            return self.conf < other.conf
+        return False
+
+
 class Arules:
     MAX_LENGTH = 1000
 
@@ -58,9 +91,12 @@ class Arules:
 
     def level_process(self, transactions: dict, level: int, min_sup: float):
         args = [(transactions[i*self.MAX_LENGTH: (i+1)*self.MAX_LENGTH], level) for i in range(self.MAX_LENGTH)]
-        pool = Pool((len(transactions) % self.MAX_LENGTH) + 1)
+        pool = Pool(int(len(transactions) / self.MAX_LENGTH) + 1)
         c_results = self.merge_dicts(pool.starmap(self.get_c_dict, args))
-        self.l.append(self.get_l_dict(len(transactions), c_results, min_sup))
+        if level == 1:
+            self.l.append(self.get_l_dict(len(transactions), c_results, min_sup, level))
+        else:
+            self.l.append(self.get_l_dict(len(transactions), c_results, min_sup, level, self.l[level-1]))
 
     def get_c_dict(self, transactions: dict, level: int) -> dict:
         """
@@ -73,7 +109,7 @@ class Arules:
         else:
             items = self.get_items(transactions)
 
-        key_list = list(map(set, itertools.combinations(items, level)))
+        key_list = list(map(set, itertools.combinations(set(items), level)))
         result_dict = dict()
         for each in key_list:
             for transaction in transactions.values():
@@ -82,14 +118,25 @@ class Arules:
         return result_dict
 
     @staticmethod
-    def get_l_dict(max_length: int, c: dict, min_sup: float) -> dict:
+    def get_l_dict(max_length: int, c: dict, min_sup: float, level: int, pre_l=None) -> dict:
         """
         :param max_length: number of transactions
         :param c: the return of get_c_dict
         :param min_sup: a float number between 0 and 1
+        :param level:
+        :param pre_l: a dict for self.c[level-1]
         :return: a dict with valid sup
         """
         for each in c:
+            if len(each) > 1:
+                sub_keys = list(map(set, itertools.combinations(set(each), level-1)))
+                if pre_l is None:
+                    raise Exception
+                pre_keys = set(pre_l.keys())
+                commons = pre_keys.intersection(sub_keys)
+                if len(commons) != len(sub_keys):
+                    c.pop(each)
+                    continue
             if c[each] / max_length < min_sup:
                 c.pop(each)
         return c
@@ -110,8 +157,20 @@ class Arules:
             result[key] = value
         return result
 
-    def get_frequent_item_sets(self, transactions: dict, min_sup: float):
-        pass
+    def get_frequent_item_sets(self, transactions: dict, min_sup: float) -> list:
+        """
+        :param transactions:
+        :param min_sup:
+        :return: the list of last level
+        """
+        level = 1
+        while self.continue_level:
+            self.level_process(transactions, level, min_sup)
+            if not self.l[level-1]:
+                self.continue_level = False
+            else:
+                level += 1
+        return list(self.l[level-2].keys())
 
     def get_arules(self, min_sup=None, min_conf=None, min_lift=None, sort_by='lift'):
         pass
