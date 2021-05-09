@@ -83,6 +83,7 @@ class Rule:
 
 class Arules:
     MAX_LENGTH = 1000
+    MAX_ITEM_SET_RESULT = 10
 
     def __init__(self):
         self.continue_level = True
@@ -102,6 +103,13 @@ class Arules:
         return set(items)
 
     def level_process(self, transactions: dict, level: int, min_sup: float):
+        """
+
+        :param transactions:
+        :param level:
+        :param min_sup:
+        :return:
+        """
         args = [(transactions[i*self.MAX_LENGTH: (i+1)*self.MAX_LENGTH], level) for i in range(self.MAX_LENGTH)]
         pool = Pool(int(len(transactions) / self.MAX_LENGTH) + 1)
         c_results = self.merge_dicts(pool.starmap(self.get_c_dict, args))
@@ -171,6 +179,7 @@ class Arules:
 
     def get_frequent_item_sets(self, transactions: dict, min_sup: float) -> list:
         """
+        get n item set
         :param transactions:
         :param min_sup:
         :return: the list of last level
@@ -183,7 +192,7 @@ class Arules:
                 self.continue_level = False
             else:
                 level += 1
-        return list(self.l[level-2].keys())[:10]
+        return list(self.l[level-2].keys())[:self.MAX_ITEM_SET_RESULT]
 
     def get_arules(self, min_sup=None, min_conf=None, min_lift=None, sort_by='lift'):
         """
@@ -195,14 +204,23 @@ class Arules:
         :return: sorted rules
         """
         item_sets = list(self.l[len(self.l)-2].keys())
-        args = [(each, self.l[len(self.l)-2][each]) for each in item_sets]
+        args = [(each, self.l[len(self.l)-2][each], min_sup, min_conf, min_lift) for each in item_sets]
         pool = Pool((len(item_sets)))
         rules = pool.starmap(self.get_item_set_rule, args)
         rules = [rule for each in rules for rule in each]
         return sorted(rules, key=lambda x: Rule.sort_by(x, sort_by))
 
     def get_item_set_rule(self, item_set: set, sup_count: int, min_sup=float('-inf'), min_conf=float('-inf'),
-                          min_lift=float('-inf')):
+                          min_lift=float('-inf')) -> list:
+        """
+        get unsorted rules of one item set
+        :param item_set: one set of  frequent item
+        :param sup_count: the sup count of item_set in transactions
+        :param min_sup: a float between 0 and 1
+        :param min_conf: a float between 0 and 1
+        :param min_lift: a float between 0 and 1
+        :return: a list of rule
+        """
         rule_parts_list = list()
         rule_obj_list = list()
         for i in range(int(len(item_set)/2)):
