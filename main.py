@@ -37,13 +37,12 @@ def convert_csv_to_dict_data(path: str) -> dict:
     return dict_data
 
 
-class Rules:
-    def __init__(self, rule_part_a: dict, rule_part_b: dict, a_plus_b: int, max_trans: int, sort_by="lift"):
+class Rule:
+    def __init__(self, rule_part_a: dict, rule_part_b: dict, a_plus_b: int, max_trans: int):
         self.rule_part_a = rule_part_a
         self.rule_part_b = rule_part_b
         self.max_transactions = max_trans
         self.sup_a_plus_b = a_plus_b
-        self.sort_by = sort_by
         self.sup = self.calculate_sup(a_plus_b, max_trans)
         self.conf = self.calculate_conf(list(rule_part_a.values())[0], a_plus_b)
         self.lift = self.calculate_lift(self.conf, list(rule_part_b.values())[0] / max_trans)
@@ -61,13 +60,25 @@ class Rules:
         return conf / sup_b
 
     def __le__(self, other):
-        if self.sort_by == "lift":
-            return self.lift < other.lift
-        elif self.sort_by == "support":
-            return self.sup < other.sup
-        elif self.sort_by == "confidence":
-            return self.conf < other.conf
+        if self.rule_part_a < other.rule_part_a:
+            return True
+        return self.rule_part_a == other.rule_part_a and self.rule_part_b < other.rule_part_b
+
+    def __eq__(self, other):
+        if self.rule_part_a == other.rule_part_a and self.rule_part_b == other.rule_part_b:
+            return True
         return False
+
+    @staticmethod
+    def sort_by(elem, sort_by):
+        if sort_by == "lift":
+            return elem.lift
+        if sort_by == "support":
+            return elem.support
+        elif sort_by == "confidence":
+            return elem.conf
+
+        return elem.lift
 
 
 class Arules:
@@ -75,6 +86,7 @@ class Arules:
 
     def __init__(self):
         self.continue_level = True
+        self.max_transactions = 0
         self.l = []
 
     @staticmethod
@@ -163,6 +175,7 @@ class Arules:
         :param min_sup:
         :return: the list of last level
         """
+        self.max_transactions = len(transactions)
         level = 1
         while self.continue_level:
             self.level_process(transactions, level, min_sup)
@@ -170,7 +183,38 @@ class Arules:
                 self.continue_level = False
             else:
                 level += 1
-        return list(self.l[level-2].keys())
+        return list(self.l[level-2].keys())[:10]
 
     def get_arules(self, min_sup=None, min_conf=None, min_lift=None, sort_by='lift'):
-        pass
+        """
+        get all rules and sort it
+        :param min_sup: a float between 0 and 1
+        :param min_conf: a float between 0 and 1
+        :param min_lift: a float between 0 and 1
+        :param sort_by: choices = (lift, support, confidence)
+        :return: sorted rules
+        """
+        item_sets = list(self.l[len(self.l)-2].keys())
+        args = [(each, self.l[len(self.l)-2][each]) for each in item_sets]
+        pool = Pool((len(item_sets)))
+        rules = pool.starmap(self.get_item_set_rule, args)
+        rules = [rule for each in rules for rule in each]
+        return sorted(rules, key=lambda x: Rule.sort_by(x, sort_by))
+
+    def get_item_set_rule(self, item_set: set, sup_count: int, min_sup=float('-inf'), min_conf=float('-inf'),
+                          min_lift=float('-inf')):
+        rule_parts_list = list()
+        rule_obj_list = list()
+        for i in range(int(len(item_set)/2)):
+            sub_sets = list(map(set, itertools.combinations(item_set, i+1)))
+            for each in sub_sets:
+                complement = item_set - each
+                if (each, complement) not in rule_parts_list:
+                    rule_parts_list.append((each, complement))
+                    rule = Rule(rule_part_a={each: self.l[len(each)-1][each]},
+                                rule_part_b={complement: self.l[len(complement)-1][complement]},
+                                a_plus_b=sup_count,
+                                max_trans=self.max_transactions)
+                    if rule.sup >= min_sup and rule.conf >= min_conf and rule.lift >= min_lift:
+                        rule_obj_list.append(rule)
+        return rule_obj_list
