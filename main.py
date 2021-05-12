@@ -28,26 +28,12 @@ def convert_csv_to_dict_data(path: str) -> dict:
     :return: return  a dictionary with key: index and value a set of sell items without np.nan
     """
     df = pd.read_csv(path, header=None)
-    # dict_data = dict()
-    # pool = Pool(11)
-    # results = pool.map(convert_dataframe_to_dict, [df[i*100: (i+1)*100] for i in range(99)])
-    # for each in results:
-    #     dict_data.update(each)
     dict_data = df.T.to_dict('list')
     for each in dict_data:
         set_data = set(dict_data[each])
         set_data.discard(np.nan)
         dict_data[each] = set_data
 
-    return dict_data
-
-
-def convert_dataframe_to_dict(df: pd.DataFrame) -> dict:
-    dict_data = df.T.to_dict('list')
-    for each in dict_data:
-        set_data = set(dict_data[each])
-        set_data.discard(np.nan)
-        dict_data[each] = set_data
     return dict_data
 
 
@@ -84,7 +70,9 @@ class Rule:
         return False
 
     def __str__(self):
-        return "{}->{}".format(self.rule_part_a, self.rule_part_b)
+        return "{}->{} support: {}, lift: {}, confidence: {}".\
+            format(list(list(self.rule_part_a.keys())[0]), list(list(self.rule_part_b.keys())[0]),
+                   self.sup, self.lift, self.conf)
 
     @staticmethod
     def sort_by(elem, sort_by):
@@ -103,10 +91,8 @@ class Arules:
     MAX_ITEM_SET_RESULT = 10
 
     def __init__(self):
-        self.continue_level = True
         self.max_transactions = 0
-        self.l = []
-        self.level_items = {}
+        self.frequents = []
 
     @staticmethod
     def get_items(transactions: dict) -> set:
@@ -135,9 +121,10 @@ class Arules:
         results = pool.starmap(self.get_c_dict, args)
         c_results = self.merge_dicts(results)
         if level == 1:
-            self.l.append(self.get_l_dict(len(transactions), c_results, min_sup, level))
+            self.frequents.append(self.get_l_dict(len(transactions), c_results, min_sup, level))
         else:
-            self.l.append(self.get_l_dict(len(transactions), c_results, min_sup, level, self.l[level-2]))
+            result = self.get_l_dict(len(transactions), c_results, min_sup, level, self.frequents[level - 2])
+            self.frequents  .append(result)
 
     def get_level_item_keys(self, level: int):
         """
@@ -145,8 +132,8 @@ class Arules:
         :return: the key items
         """
         key_list = None
-        if len(self.l) > 0:
-            items = list(self.l[level - 2].keys())
+        if len(self.frequents) > 0:
+            items = list(self.frequents[level - 2].keys())
             key_list = set()
             count = 1
             for i in range(len(items)):
@@ -156,8 +143,6 @@ class Arules:
                     if item[:-1] == each[:-1] and item[-1] != each[-1]:
                         key_list.add(frozenset(item + [each[-1], ]))
                     count += 1
-            # TODO delete print
-            print(len(key_list), "(((((((((((((((((((((((")
         return key_list
 
     def get_c_dict(self, transactions: dict, level: int, item_keys=None) -> dict:
@@ -219,11 +204,9 @@ class Arules:
             for each in list_dict:
                 value += each.get(key, 0)
             result[key] = value
-        # TODO delete the print
-        print(len(result), 'after merge')
         return result
 
-    def get_frequent_item_sets(self, transactions: dict, min_sup: float) -> list:
+    def get_frequent_item_sets(self, transactions: dict, min_sup=float('-inf')) -> list:
         """
         get n item set
         :param transactions: a dict of transaction ids and the list of items
@@ -234,11 +217,10 @@ class Arules:
         level = 1
         while True:
             self.level_process(transactions, level, min_sup)
-            if not self.l[level-1]:
-                # print(level)
+            if not self.frequents[level - 1]:
                 break
             level += 1
-        return list(self.l[level-1].keys())[:self.MAX_ITEM_SET_RESULT]
+        return list(self.frequents[level - 2].keys())[:self.MAX_ITEM_SET_RESULT]
 
     def get_arules(self, min_sup=float('-inf'), min_conf=float('-inf'), min_lift=float('-inf'), sort_by='lift'):
         """
@@ -249,12 +231,12 @@ class Arules:
         :param sort_by: choices = (lift, support, confidence)
         :return: sorted rules
         """
-        item_sets = list(self.l[len(self.l)-2].keys())
-        args = [(set(each), self.l[len(self.l)-2][each], min_sup, min_conf, min_lift) for each in item_sets]
-        pool = Pool((len(item_sets)))
+        item_sets = list(self.frequents[len(self.frequents) - 2].keys())
+        args = [(set(each), self.frequents[len(self.frequents) - 2][each], min_sup, min_conf, min_lift) for each in item_sets]
+        pool = Pool(len(item_sets))
         rules = pool.starmap(self.get_item_set_rule, args)
         rules = [rule for each in rules for rule in each]
-        return sorted(rules, key=lambda x: Rule.sort_by(x, sort_by))
+        return sorted(rules, key=lambda x: Rule.sort_by(x, sort_by), reverse=True)
 
     def get_item_set_rule(self, item_set: set, sup_count: int, min_sup=float('-inf'), min_conf=float('-inf'),
                           min_lift=float('-inf')) -> list:
@@ -275,8 +257,8 @@ class Arules:
                 complement = item_set - each
                 if (each, complement) not in rule_parts_list:
                     rule_parts_list.append((each, complement))
-                    rule = Rule(rule_part_a={frozenset(each): self.l[len(each)-1][frozenset(each)]},
-                                rule_part_b={frozenset(complement): self.l[len(complement)-1][frozenset(complement)]},
+                    rule = Rule(rule_part_a={frozenset(each): self.frequents[len(each) - 1][frozenset(each)]},
+                                rule_part_b={frozenset(complement): self.frequents[len(complement) - 1][frozenset(complement)]},
                                 a_plus_b=sup_count,
                                 max_trans=self.max_transactions)
                     if rule.sup >= min_sup and rule.conf >= min_conf and rule.lift >= min_lift:
@@ -285,10 +267,11 @@ class Arules:
 
 
 if __name__ == "__main__":
-    transactionss = convert_csv_to_dict_data("Book2.csv")
+    start = time.time()
+    transactionss = convert_csv_to_dict_data("data.csv")
     algo = Arules()
-    algo.get_frequent_item_sets(transactionss, 2/9)
-    print(algo.l)
-    l = algo.get_arules()
-    l = [str(each) for each in l]
-    print(l)
+    frequents = algo.get_frequent_item_sets(transactionss, 0.005)
+    l = algo.get_arules(min_sup=0.005, min_conf=0.4)
+    for each in l:
+        print(str(each))
+    print(time.time()-start)
