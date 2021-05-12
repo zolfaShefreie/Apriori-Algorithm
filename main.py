@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import itertools
 from multiprocessing import Pool
+import time
 
 
 def convert_csv_to_set(path: str) -> set:
@@ -27,13 +28,26 @@ def convert_csv_to_dict_data(path: str) -> dict:
     :return: return  a dictionary with key: index and value a set of sell items without np.nan
     """
     df = pd.read_csv(path, header=None)
-
+    # dict_data = dict()
+    # pool = Pool(11)
+    # results = pool.map(convert_dataframe_to_dict, [df[i*100: (i+1)*100] for i in range(99)])
+    # for each in results:
+    #     dict_data.update(each)
     dict_data = df.T.to_dict('list')
     for each in dict_data:
         set_data = set(dict_data[each])
         set_data.discard(np.nan)
         dict_data[each] = set_data
 
+    return dict_data
+
+
+def convert_dataframe_to_dict(df: pd.DataFrame) -> dict:
+    dict_data = df.T.to_dict('list')
+    for each in dict_data:
+        set_data = set(dict_data[each])
+        set_data.discard(np.nan)
+        dict_data[each] = set_data
     return dict_data
 
 
@@ -69,6 +83,9 @@ class Rule:
             return True
         return False
 
+    def __str__(self):
+        return "{}->{}".format(self.rule_part_a, self.rule_part_b)
+
     @staticmethod
     def sort_by(elem, sort_by):
         if sort_by == "lift":
@@ -89,6 +106,7 @@ class Arules:
         self.continue_level = True
         self.max_transactions = 0
         self.l = []
+        self.level_items = {}
 
     @staticmethod
     def get_items(transactions: dict) -> set:
@@ -110,30 +128,55 @@ class Arules:
         :param min_sup:
         :return:
         """
-        args = [(transactions[i*self.MAX_LENGTH: (i+1)*self.MAX_LENGTH], level) for i in range(self.MAX_LENGTH)]
+        item_keys = self.get_level_item_keys(level)
+        args = [(dict(list(transactions.items())[i*self.MAX_LENGTH: (i+1)*self.MAX_LENGTH]), level, item_keys)
+                for i in range(int(len(transactions) / self.MAX_LENGTH) + 1)]
         pool = Pool(int(len(transactions) / self.MAX_LENGTH) + 1)
-        c_results = self.merge_dicts(pool.starmap(self.get_c_dict, args))
+        results = pool.starmap(self.get_c_dict, args)
+        c_results = self.merge_dicts(results)
+        # if level == 2:
+        #     print(c_results)
         if level == 1:
             self.l.append(self.get_l_dict(len(transactions), c_results, min_sup, level))
         else:
-            self.l.append(self.get_l_dict(len(transactions), c_results, min_sup, level, self.l[level-1]))
+            self.l.append(self.get_l_dict(len(transactions), c_results, min_sup, level, self.l[level-2]))
 
-    def get_c_dict(self, transactions: dict, level: int) -> dict:
+    def get_level_item_keys(self, level):
+        key_list = None
+        if len(self.l) > 0:
+            items = list(self.l[level - 2].keys())
+            # print(items)
+            key_list = set()
+            count = 1
+            for i in range(len(items)):
+                item = sorted(list(items[i]))
+                for each in items[i + 1:]:
+                    each = sorted(list(each))
+                    # print(each, item, each[:-1], item[:-1], each[-1], item[-1])
+                    if item[:-1] == each[:-1] and item[-1] != each[-1]:
+                        # print(item, each, "????????????", count)
+                        key_list.add(frozenset(item + [each[-1], ]))
+                    count += 1
+            # if level == 4:
+            #     print(key_list)
+            print(len(key_list), "(((((((((((((((((((((((")
+        return key_list
+
+    def get_c_dict(self, transactions: dict, level: int, item_keys=None) -> dict:
         """
         :param transactions: the dict of transactions
         :param level: the level of calculate
+        :param item_keys: a list of tuple for a set of items
         :return: a dict {item: sup}
         """
-        if len(self.l) > 0:
-            items = set(self.l[0].keys())
-        else:
+        if level == 1:
             items = self.get_items(transactions)
+            item_keys = list(map(frozenset, itertools.combinations(set(items), level)))
 
-        key_list = list(map(set, itertools.combinations(set(items), level)))
         result_dict = dict()
-        for each in key_list:
+        for each in item_keys:
             for transaction in transactions.values():
-                if transaction.intersection(each) == each:
+                if transaction.intersection(each) == set(each):
                     result_dict[each] = result_dict.get(each, 0) + 1
         return result_dict
 
@@ -147,19 +190,20 @@ class Arules:
         :param pre_l: a dict for self.c[level-1]
         :return: a dict with valid sup
         """
+        c_copy = dict(c)
         for each in c:
             if len(each) > 1:
-                sub_keys = list(map(set, itertools.combinations(set(each), level-1)))
+                sub_keys = list(map(frozenset, itertools.combinations(set(each), level-1)))
                 if pre_l is None:
                     raise Exception
                 pre_keys = set(pre_l.keys())
                 commons = pre_keys.intersection(sub_keys)
                 if len(commons) != len(sub_keys):
-                    c.pop(each)
+                    c_copy.pop(each)
                     continue
             if c[each] / max_length < min_sup:
-                c.pop(each)
-        return c
+                c_copy.pop(each)
+        return c_copy
 
     @staticmethod
     def merge_dicts(list_dict: list) -> dict:
@@ -169,12 +213,14 @@ class Arules:
         :return: merge dict
         """
         result = dict()
-        keys = list(set([key for each in list_dict for key in each]))
+        keys = list(set([frozenset(key) for each in list_dict for key in each]))
+        print(len(keys), 'before merge')
         for key in keys:
             value = 0
             for each in list_dict:
                 value += each.get(key, 0)
             result[key] = value
+        print(len(result), 'after merge')
         return result
 
     def get_frequent_item_sets(self, transactions: dict, min_sup: float) -> list:
@@ -186,15 +232,15 @@ class Arules:
         """
         self.max_transactions = len(transactions)
         level = 1
-        while self.continue_level:
+        while True:
             self.level_process(transactions, level, min_sup)
             if not self.l[level-1]:
-                self.continue_level = False
-            else:
-                level += 1
-        return list(self.l[level-2].keys())[:self.MAX_ITEM_SET_RESULT]
+                # print(level)
+                break
+            level += 1
+        return list(self.l[level-1].keys())[:self.MAX_ITEM_SET_RESULT]
 
-    def get_arules(self, min_sup=None, min_conf=None, min_lift=None, sort_by='lift'):
+    def get_arules(self, min_sup=float('-inf'), min_conf=float('-inf'), min_lift=float('-inf'), sort_by='lift'):
         """
         get all rules and sort it
         :param min_sup: a float between 0 and 1
@@ -204,7 +250,7 @@ class Arules:
         :return: sorted rules
         """
         item_sets = list(self.l[len(self.l)-2].keys())
-        args = [(each, self.l[len(self.l)-2][each], min_sup, min_conf, min_lift) for each in item_sets]
+        args = [(set(each), self.l[len(self.l)-2][each], min_sup, min_conf, min_lift) for each in item_sets]
         pool = Pool((len(item_sets)))
         rules = pool.starmap(self.get_item_set_rule, args)
         rules = [rule for each in rules for rule in each]
@@ -223,16 +269,28 @@ class Arules:
         """
         rule_parts_list = list()
         rule_obj_list = list()
-        for i in range(int(len(item_set)/2)):
+        for i in range(int(len(item_set)-1)):
             sub_sets = list(map(set, itertools.combinations(item_set, i+1)))
             for each in sub_sets:
                 complement = item_set - each
                 if (each, complement) not in rule_parts_list:
                     rule_parts_list.append((each, complement))
-                    rule = Rule(rule_part_a={each: self.l[len(each)-1][each]},
-                                rule_part_b={complement: self.l[len(complement)-1][complement]},
+                    rule = Rule(rule_part_a={frozenset(each): self.l[len(each)-1][frozenset(each)]},
+                                rule_part_b={frozenset(complement): self.l[len(complement)-1][frozenset(complement)]},
                                 a_plus_b=sup_count,
                                 max_trans=self.max_transactions)
                     if rule.sup >= min_sup and rule.conf >= min_conf and rule.lift >= min_lift:
                         rule_obj_list.append(rule)
         return rule_obj_list
+
+
+if __name__ == "__main__":
+    transactionss = convert_csv_to_dict_data("Book2.csv")
+    algo = Arules()
+    algo.get_frequent_item_sets(transactionss, 2/9)
+    print(algo.l)
+    l = algo.get_arules()
+    l = [str(each) for each in l]
+    print(l)
+    # l=[{frozenset(['sda', 'aa',] ): 2, frozenset(['sae', 'ns', ]): 12}, {frozenset(['sa', ]): 2, frozenset(['ns', 'sae', ]): 12}]
+    # print(Arules.merge_dicts(l))
