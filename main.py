@@ -122,10 +122,10 @@ class Arules:
 
     def level_process(self, transactions: dict, level: int, min_sup: float):
         """
-
+        a func management process of one level
         :param transactions:
-        :param level:
-        :param min_sup:
+        :param level: level or depth of process
+        :param min_sup: minimum support
         :return:
         """
         item_keys = self.get_level_item_keys(level)
@@ -134,38 +134,37 @@ class Arules:
         pool = Pool(int(len(transactions) / self.MAX_LENGTH) + 1)
         results = pool.starmap(self.get_c_dict, args)
         c_results = self.merge_dicts(results)
-        # if level == 2:
-        #     print(c_results)
         if level == 1:
             self.l.append(self.get_l_dict(len(transactions), c_results, min_sup, level))
         else:
             self.l.append(self.get_l_dict(len(transactions), c_results, min_sup, level, self.l[level-2]))
 
-    def get_level_item_keys(self, level):
+    def get_level_item_keys(self, level: int):
+        """
+        :param level: level or depth of process
+        :return: the key items
+        """
         key_list = None
         if len(self.l) > 0:
             items = list(self.l[level - 2].keys())
-            # print(items)
             key_list = set()
             count = 1
             for i in range(len(items)):
                 item = sorted(list(items[i]))
                 for each in items[i + 1:]:
                     each = sorted(list(each))
-                    # print(each, item, each[:-1], item[:-1], each[-1], item[-1])
                     if item[:-1] == each[:-1] and item[-1] != each[-1]:
-                        # print(item, each, "????????????", count)
                         key_list.add(frozenset(item + [each[-1], ]))
                     count += 1
-            # if level == 4:
-            #     print(key_list)
+            # TODO delete print
             print(len(key_list), "(((((((((((((((((((((((")
         return key_list
 
     def get_c_dict(self, transactions: dict, level: int, item_keys=None) -> dict:
         """
+        make the table c
         :param transactions: the dict of transactions
-        :param level: the level of calculate
+        :param level: level or depth of process
         :param item_keys: a list of tuple for a set of items
         :return: a dict {item: sup}
         """
@@ -183,10 +182,11 @@ class Arules:
     @staticmethod
     def get_l_dict(max_length: int, c: dict, min_sup: float, level: int, pre_l=None) -> dict:
         """
+        make the table l
         :param max_length: number of transactions
         :param c: the return of get_c_dict
         :param min_sup: a float number between 0 and 1
-        :param level:
+        :param level: level or depth of process
         :param pre_l: a dict for self.c[level-1]
         :return: a dict with valid sup
         """
@@ -214,20 +214,20 @@ class Arules:
         """
         result = dict()
         keys = list(set([frozenset(key) for each in list_dict for key in each]))
-        print(len(keys), 'before merge')
         for key in keys:
             value = 0
             for each in list_dict:
                 value += each.get(key, 0)
             result[key] = value
+        # TODO delete the print
         print(len(result), 'after merge')
         return result
 
     def get_frequent_item_sets(self, transactions: dict, min_sup: float) -> list:
         """
         get n item set
-        :param transactions:
-        :param min_sup:
+        :param transactions: a dict of transaction ids and the list of items
+        :param min_sup: minimum support
         :return: the list of last level
         """
         self.max_transactions = len(transactions)
@@ -292,5 +292,3 @@ if __name__ == "__main__":
     l = algo.get_arules()
     l = [str(each) for each in l]
     print(l)
-    # l=[{frozenset(['sda', 'aa',] ): 2, frozenset(['sae', 'ns', ]): 12}, {frozenset(['sa', ]): 2, frozenset(['ns', 'sae', ]): 12}]
-    # print(Arules.merge_dicts(l))
