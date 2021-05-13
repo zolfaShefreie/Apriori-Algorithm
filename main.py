@@ -119,6 +119,8 @@ class Arules:
                 for i in range(int(len(transactions) / self.MAX_LENGTH) + 1)]
         pool = Pool(int(len(transactions) / self.MAX_LENGTH) + 1)
         results = pool.starmap(self.get_c_dict, args)
+        pool.close()
+        pool.terminate()
         c_results = self.merge_dicts(results)
         if level == 1:
             self.frequents.append(self.get_l_dict(len(transactions), c_results, min_sup, level))
@@ -235,6 +237,8 @@ class Arules:
         args = [(set(each), self.frequents[len(self.frequents) - 2][each], min_sup, min_conf, min_lift) for each in item_sets]
         pool = Pool(len(item_sets))
         rules = pool.starmap(self.get_item_set_rule, args)
+        pool.close()
+        pool.terminate()
         rules = [rule for each in rules for rule in each]
         return sorted(rules, key=lambda x: Rule.sort_by(x, sort_by), reverse=True)
 
@@ -271,7 +275,8 @@ if __name__ == "__main__":
     transactionss = convert_csv_to_dict_data("data.csv")
     algo = Arules()
     frequents = algo.get_frequent_item_sets(transactionss, 0.005)
-    l = algo.get_arules(min_sup=0.005, min_conf=0.4)
+    print(time.time() - start)
+    l = algo.get_arules(min_sup=0.005, min_conf=0.2)
     for each in l:
         print(str(each))
     print(time.time()-start)
