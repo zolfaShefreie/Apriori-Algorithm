@@ -79,7 +79,7 @@ class Rule:
         if sort_by == "lift":
             return elem.lift
         if sort_by == "support":
-            return elem.support
+            return elem.sup
         elif sort_by == "confidence":
             return elem.conf
 
